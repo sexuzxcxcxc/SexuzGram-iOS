@@ -1,10 +1,7 @@
-name: Build SexuzGram iOS
+name: Build Telegram iOS (Custom)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - my-mod
 
 jobs:
   build:
@@ -21,6 +18,19 @@ jobs:
           brew install bazel python3
           python3 -m pip install --upgrade pip setuptools
 
+      - name: Decode signing files
+        run: |
+          echo "$IOS_P12_BASE64" | base64 --decode > signing.p12
+          echo "$IOS_PROVISION_BASE64" | base64 --decode > profile.mobileprovision
+
+      - name: Install certificate
+        run: |
+          security create-keychain -p "1234" build.keychain
+          security import signing.p12 -k ~/Library/Keychains/build.keychain -P "$IOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -s ~/Library/Keychains/build.keychain
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+
       - name: Generate Xcode project
         run: |
           python3 build-system/Make/Make.py \
@@ -29,23 +39,27 @@ jobs:
             --configurationPath=build-config/my-config.json \
             --disableProvisioningProfiles
 
-      - name: Build SexuzGram (Release)
+      - name: Build iOS app
         run: |
           xcodebuild -project Telegram.xcodeproj \
             -scheme Telegram \
             -configuration Release \
             -sdk iphoneos \
+            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution: Muhammed Ali YILDIZ (9M8YPS6A2W)" \
+            PROVISIONING_PROFILE_SPECIFIER="c30ce571-4f3c-429f-b734-b50e56485090" \
             BUILD_DIR=build
 
-      - name: Archive IPA
+      - name: Package IPA
         run: |
-          mkdir -p build_output
-          cp -r build/Release-iphoneos/Telegram.app build_output/SexuzGram.app
-          cd build_output
-          zip -r SexuzGram.ipa SexuzGram.app
+          mkdir -p output
+          cd build/Release-iphoneos
+          zip -r ../../output/Telegram.ipa Telegram.app
+          cd ../../
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: SexuzGram-IPA
-          path: build_output/SexuzGram.ipa
+          name: Telegram-IPA
+          path: output/Telegram.ipa
