@@ -15,16 +15,29 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install bazel python3
+          echo "🔧 Updating Homebrew..."
+          brew update
+
+          echo "🧱 Checking Bazel installation..."
+          if brew list bazelisk &>/dev/null; then
+            echo "✅ Bazelisk already installed, using it as Bazel"
+          else
+            brew install bazelisk
+          fi
+
+          echo "🐍 Installing Python..."
+          brew install python3 || true
           python3 -m pip install --upgrade pip setuptools
 
       - name: Decode signing files
         run: |
+          echo "🔐 Decoding signing files..."
           echo "$IOS_P12_BASE64" | base64 --decode > signing.p12
           echo "$IOS_PROVISION_BASE64" | base64 --decode > profile.mobileprovision
 
       - name: Install certificate
         run: |
+          echo "🔏 Installing certificate..."
           security create-keychain -p "1234" build.keychain
           security import signing.p12 -k ~/Library/Keychains/build.keychain -P "$IOS_CERT_PASSWORD" -T /usr/bin/codesign
           security list-keychains -s ~/Library/Keychains/build.keychain
@@ -33,6 +46,7 @@ jobs:
 
       - name: Generate Xcode project
         run: |
+          echo "🛠️ Generating Xcode project..."
           python3 build-system/Make/Make.py \
             --cacheDir="$HOME/telegram-bazel-cache" \
             generateProject \
@@ -41,6 +55,8 @@ jobs:
 
       - name: Build iOS app
         run: |
+          echo "🏗️ Building iOS app with Xcode..."
+          set -o pipefail
           xcodebuild -project Telegram.xcodeproj \
             -scheme Telegram \
             -configuration Release \
@@ -49,10 +65,12 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution: Muhammed Ali YILDIZ (9M8YPS6A2W)" \
             PROVISIONING_PROFILE_SPECIFIER="c30ce571-4f3c-429f-b734-b50e56485090" \
-            BUILD_DIR=build
+            BUILD_DIR=build \
+          | xcpretty
 
       - name: Package IPA
         run: |
+          echo "📦 Packaging IPA..."
           mkdir -p output
           cd build/Release-iphoneos
           zip -r ../../output/Telegram.ipa Telegram.app
