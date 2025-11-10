@@ -1,4 +1,7 @@
 name: Build Telegram iOS (Custom)
+permissions:
+  contents: read
+  id-token: write
 
 on:
   workflow_dispatch:
