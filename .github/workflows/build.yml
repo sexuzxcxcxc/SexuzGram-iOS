@@ -8,44 +8,64 @@ jobs:
     runs-on: macos-latest
 
     steps:
+      # 🧩 1. Получаем репозиторий и сабмодули
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # Удаляем конфликтующий bazelisk и ставим нужные зависимости
+      # 🧰 2. Устанавливаем зависимости
       - name: Install dependencies
         run: |
+          echo "🧩 Unlinking bazelisk if exists..."
           brew unlink bazelisk || true
+          echo "📦 Installing bazel and python3..."
           brew install bazel python3
+          echo "🐍 Creating Python virtual environment..."
           python3 -m venv venv
           source venv/bin/activate
           pip install --upgrade pip setuptools wheel
 
+      # 🔐 3. Распаковываем сертификаты из Secrets
       - name: Decode signing files
         run: |
-          echo "$IOS_P12_BASE64" | base64 --decode > signing.p12
-          echo "$IOS_PROVISION_BASE64" | base64 --decode > profile.mobileprovision
+          if [ -z "$IOS_P12_BASE64" ] || [ -z "$IOS_PROVISION_BASE64" ]; then
+            echo "❌ ERROR: Missing signing secrets. Please set IOS_P12_BASE64 and IOS_PROVISION_BASE64 in repository Secrets."
+            exit 1
+          fi
+          echo "📦 Decoding certificate and provisioning profile..."
+          echo "$IOS_P12_BASE64" | base64 --decode > signing.p12 || { echo "❌ Failed to decode p12"; exit 1; }
+          echo "$IOS_PROVISION_BASE64" | base64 --decode > profile.mobileprovision || { echo "❌ Failed to decode provisioning profile"; exit 1; }
 
+      # 🧾 4. Устанавливаем сертификат и provisioning-профиль
       - name: Install certificate
         run: |
+          if [ -z "$IOS_CERT_PASSWORD" ]; then
+            echo "❌ ERROR: Missing IOS_CERT_PASSWORD secret."
+            exit 1
+          fi
+          echo "🔐 Setting up keychain..."
           security create-keychain -p "1234" build.keychain
-          security import signing.p12 -k ~/Library/Keychains/build.keychain -P "$IOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security import signing.p12 -k ~/Library/Keychains/build.keychain -P "$IOS_CERT_PASSWORD" -T /usr/bin/codesign || { echo "❌ Failed to import signing.p12 — wrong password or corrupted file"; exit 1; }
           security list-keychains -s ~/Library/Keychains/build.keychain
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+          echo "✅ Certificate and profile installed successfully."
 
+      # 🏗️ 5. Генерируем Xcode-проект
       - name: Generate Xcode project
         run: |
-          source venv/bin/activate
+          echo "🛠️ Generating Xcode project..."
           python3 build-system/Make/Make.py \
             --cacheDir="$HOME/telegram-bazel-cache" \
             generateProject \
             --configurationPath=build-config/my-config.json \
             --disableProvisioningProfiles
 
+      # 📱 6. Сборка IPA-файла
       - name: Build iOS app
         run: |
+          echo "🏗️ Building Release..."
           xcodebuild -project Telegram.xcodeproj \
             -scheme Telegram \
             -configuration Release \
@@ -56,13 +76,17 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="c30ce571-4f3c-429f-b734-b50e56485090" \
             BUILD_DIR=build
 
+      # 📦 7. Архивируем IPA
       - name: Package IPA
         run: |
+          echo "📦 Packaging IPA..."
           mkdir -p output
           cd build/Release-iphoneos
           zip -r ../../output/Telegram.ipa Telegram.app
           cd ../../
+          echo "✅ IPA package created successfully."
 
+      # ☁️ 8. Загружаем IPA как артефакт
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
